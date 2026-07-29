@@ -236,7 +236,7 @@ def staff(message):
         lines.append(f"{entry['label']} — {entry['name']} (ID: {uid})")
     bot.send_message(message.chat.id, "\n".join(lines))
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "🚀 Start Work")
+@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🚀 Start Work")
 def start_work(message):
     user_id = message.from_user.id
     label = get_or_create_label(user_id, message.from_user.first_name)
@@ -283,19 +283,19 @@ def handle_break(message, action, minutes):
         f"🕐 Time: {now.strftime('%m/%d %H:%M:%S')} — expected back within {minutes} min."
     )
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "🍕 Eat Break")
+@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🍕 Eat Break")
 def eat(message):
     handle_break(message, "Eat", 30)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "🧻 Toilet")
+@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🧻 Toilet")
 def toilet(message):
     handle_break(message, "Toilet", 15)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "💨 Smoke")
+@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "💨 Smoke")
 def smoke(message):
     handle_break(message, "Smoke", 15)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "🧭 Back to Seat")
+@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🧭 Back to Seat")
 def back_to_seat(message):
     user_id = message.from_user.id
     label = get_or_create_label(user_id, message.from_user.first_name)
@@ -315,7 +315,7 @@ def back_to_seat(message):
         f"🕐 Time: {now.strftime('%m/%d %H:%M:%S')}"
     )
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "🏁 Off Work")
+@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🏁 Off Work")
 def off_work(message):
     user_id = message.from_user.id
     label = get_or_create_label(user_id, message.from_user.first_name)
@@ -375,7 +375,7 @@ def off_work(message):
     bot.send_message(message.chat.id, "📊 Type /report to see your full report.")
     post_to_group(group_body)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "private" and msg.text == "🌅 Off Day")
+@bot.message_handler(func=lambda msg:msg.chat.type == "group" and msg.text == "🌅 Off Day")
 def off_day(message):
     user_id = message.from_user.id
     label = get_or_create_label(user_id, message.from_user.first_name)
