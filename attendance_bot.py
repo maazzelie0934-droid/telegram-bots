@@ -11,33 +11,8 @@ bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE     = "attendance_data.json"
 COUNTERS_FILE = "counters_data.json"
-LABELS_FILE   = "labels_data.json"   # user_id -> anonymous "Employee N" label (admin-only mapping)
 
 SHIFT_HOURS = 12  # expected shift length used for "leaving early" detection
-
-# ── Group + Admin configuration ────────────────────────────────────────────────
-# GROUP_CHAT_ID: the shared group where anonymized check-in/out updates get posted.
-#   Set this as an environment variable once you know the group's chat id.
-#   Tip: add the bot to the group, then send /groupid inside that group as an
-#   admin — the bot will reply with the correct id to put in GROUP_CHAT_ID.
-GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID")
-if GROUP_CHAT_ID:
-    try:
-        GROUP_CHAT_ID = int(GROUP_CHAT_ID)
-    except ValueError:
-        GROUP_CHAT_ID = None
-
-# ADMIN_IDS: comma-separated Telegram user ids allowed to see real names, e.g.
-#   ADMIN_IDS=111111111,222222222
-#   Tip: send /myid to the bot privately to find your own Telegram user id.
-ADMIN_IDS = set()
-for part in os.getenv("ADMIN_IDS", "").split(","):
-    part = part.strip()
-    if part.isdigit():
-        ADMIN_IDS.add(int(part))
-
-def is_admin(user_id):
-    return user_id in ADMIN_IDS
 
 active_timers = {}   # user_id -> threading.Timer (break overdue warning)
 active_breaks = {}   # user_id -> {"type": "Eat"/"Toilet"/"Smoke", "start": datetime}
@@ -62,7 +37,6 @@ def save_json(path, data):
 
 _attendance_raw = load_json(DATA_FILE)     # { "user_id": [ {action, time, datetime} ] }
 _counters_raw   = load_json(COUNTERS_FILE) # { "user_id": {Eat: {count,seconds}, ...} }
-_labels_raw     = load_json(LABELS_FILE)   # { "user_id": {"label": "Employee 3", "name": "John"} }
 
 def get_attendance(user_id):
     return _attendance_raw.get(str(user_id), [])
@@ -90,25 +64,10 @@ def set_counters(user_id, c):
     _counters_raw[str(user_id)] = c
     save_json(COUNTERS_FILE, _counters_raw)
 
-# ── Anonymous labels (identity hidden from everyone except admins) ────────────
-
-def get_or_create_label(user_id, display_name):
-    uid = str(user_id)
-    entry = _labels_raw.get(uid)
-    if entry is None:
-        next_num = len(_labels_raw) + 1
-        entry = {"label": f"Employee {next_num}", "name": display_name}
-        _labels_raw[uid] = entry
-        save_json(LABELS_FILE, _labels_raw)
-    else:
-        # keep the stored name up to date in case it changed on Telegram
-        if entry.get("name") != display_name:
-            entry["name"] = display_name
-            _labels_raw[uid] = entry
-            save_json(LABELS_FILE, _labels_raw)
-    return entry["label"]
-
 # ── Helpers ────────────────────────────────────────────────────────────────────
+
+def is_group(message):
+    return message.chat.type in ("group", "supergroup")
 
 def fmt_hms(total_seconds):
     total_seconds = max(0, int(total_seconds))
@@ -158,12 +117,12 @@ def cancel_timer(user_id):
         active_timers[user_id].cancel()
         del active_timers[user_id]
 
-def start_warning_timer(chat_id, user_id, label, action, minutes):
+def start_warning_timer(chat_id, user_id, name, action, minutes):
     cancel_timer(user_id)
     def warn():
         bot.send_message(
             chat_id,
-            f"⚠️ You have been on {action} for {minutes} minutes!\n🧭 Please return to your seat now!"
+            f"⚠️ {name} has been on {action} for {minutes} minutes!\n🧭 Please return to your seat now!"
         )
     t = threading.Timer(minutes * 60, warn)
     t.daemon = True
@@ -191,23 +150,14 @@ def counters_summary_text(user_id):
         lines.append(f"Total {lbl} time today: {fmt_hms(c[lbl]['seconds'])}")
     return "\n".join(lines), total_activity_seconds
 
-def post_to_group(text):
-    """Broadcast an anonymized update to the shared monitoring group, if configured."""
-    if not GROUP_CHAT_ID:
-        return
-    try:
-        bot.send_message(GROUP_CHAT_ID, text)
-    except Exception as e:
-        print(f"Group post error: {e}")
-
 DIVIDER = "――――――――――――――"
 
-# ── Handlers ────────────────────────────────────────────────────────────────────
+# ── Handlers (all working directly inside the group chat) ─────────────────────
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    if message.chat.type != "private":
-        return  # only respond to the personal check-in flow in private chats
+    if not is_group(message):
+        return  # only respond inside the group chat
     name = message.from_user.first_name
     bot.send_message(
         message.chat.id,
@@ -223,23 +173,10 @@ def myid(message):
 def groupid(message):
     bot.send_message(message.chat.id, f"This chat's ID is: {message.chat.id}")
 
-@bot.message_handler(commands=['staff'])
-def staff(message):
-    """Admin-only: reveals which real person is behind each anonymous label."""
-    if message.chat.type != "private" or not is_admin(message.from_user.id):
-        return
-    if not _labels_raw:
-        bot.send_message(message.chat.id, "No staff registered yet.")
-        return
-    lines = ["👥 Staff directory (admin-only):", DIVIDER]
-    for uid, entry in _labels_raw.items():
-        lines.append(f"{entry['label']} — {entry['name']} (ID: {uid})")
-    bot.send_message(message.chat.id, "\n".join(lines))
-
-@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🚀 Start Work")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "🚀 Start Work")
 def start_work(message):
     user_id = message.from_user.id
-    label = get_or_create_label(user_id, message.from_user.first_name)
+    name = message.from_user.first_name
     cancel_timer(user_id)
     active_breaks.pop(user_id, None)
     set_counters(user_id, json.loads(json.dumps(DEFAULT_COUNTERS)))  # new day, reset counters
@@ -247,30 +184,26 @@ def start_work(message):
 
     bot.send_message(
         message.chat.id,
-        f"🚀 Start Work\n\n"
+        f"🚀 {name} — Start Work\n\n"
         f"{DIVIDER}\n"
         f"✅ Check-In Succeeded: Start Work - {now.strftime('%m/%d %H:%M:%S')}\n"
         f"⏳ {SHIFT_HOURS} hour shift started!",
         reply_markup=get_markup()
     )
-    post_to_group(
-        f"🚀 {label} started work!\n"
-        f"🕐 Time: {now.strftime('%m/%d %H:%M:%S')}"
-    )
 
 def handle_break(message, action, minutes):
     user_id = message.from_user.id
-    label = get_or_create_label(user_id, message.from_user.first_name)
+    name = message.from_user.first_name
     cancel_timer(user_id)
     start_break(user_id, action)
     now, time_str = log_event(user_id, action)
-    start_warning_timer(message.chat.id, user_id, label, action, minutes)
+    start_warning_timer(message.chat.id, user_id, name, action, minutes)
     counters_text, _ = counters_summary_text(user_id)
     emoji = {"Eat": "🍕", "Toilet": "🧻", "Smoke": "💨"}[action]
 
     bot.send_message(
         message.chat.id,
-        f"{emoji} {action} Break\n\n"
+        f"{emoji} {name} — {action} Break\n\n"
         f"{DIVIDER}\n"
         f"✅ Check-In Succeeded: {action} - {now.strftime('%m/%d %H:%M:%S')}\n"
         f"⏰ Please return within {minutes} minutes!\n"
@@ -278,47 +211,39 @@ def handle_break(message, action, minutes):
         f"{counters_text}",
         reply_markup=get_markup()
     )
-    post_to_group(
-        f"{emoji} {label} went for a {action} break.\n"
-        f"🕐 Time: {now.strftime('%m/%d %H:%M:%S')} — expected back within {minutes} min."
-    )
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🍕 Eat Break")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "🍕 Eat Break")
 def eat(message):
     handle_break(message, "Eat", 30)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🧻 Toilet")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "🧻 Toilet")
 def toilet(message):
     handle_break(message, "Toilet", 15)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "💨 Smoke")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "💨 Smoke")
 def smoke(message):
     handle_break(message, "Smoke", 15)
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🧭 Back to Seat")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "🧭 Back to Seat")
 def back_to_seat(message):
     user_id = message.from_user.id
-    label = get_or_create_label(user_id, message.from_user.first_name)
+    name = message.from_user.first_name
     cancel_timer(user_id)
     close_active_break(user_id)
     now, time_str = log_event(user_id, "Back to Seat")
 
     bot.send_message(
         message.chat.id,
-        f"🧭 Back to Seat\n\n"
+        f"🧭 {name} — Back to Seat\n\n"
         f"{DIVIDER}\n"
         f"✅ Check-In Succeeded: Back to Seat - {now.strftime('%m/%d %H:%M:%S')}",
         reply_markup=get_markup()
     )
-    post_to_group(
-        f"🧭 {label} is back at their seat.\n"
-        f"🕐 Time: {now.strftime('%m/%d %H:%M:%S')}"
-    )
 
-@bot.message_handler(func=lambda msg: msg.chat.type == "group" and msg.text == "🏁 Off Work")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "🏁 Off Work")
 def off_work(message):
     user_id = message.from_user.id
-    label = get_or_create_label(user_id, message.from_user.first_name)
+    name = message.from_user.first_name
     cancel_timer(user_id)
     close_active_break(user_id)  # safety net if a break was left open
     now, time_str = log_event(user_id, "Off Work")
@@ -338,16 +263,14 @@ def off_work(message):
                 f"Duration of Leaving Early: {fmt_hms(early_seconds)}\n"
                 f"✅ Check-In Succeeded: Off Work - {now.strftime('%m/%d %H:%M:%S')}"
             )
-            group_status = f"⚠️ left early by {fmt_hms(early_seconds)}"
         else:
             status_block = (
                 f"✅ Great job, full shift completed!\n"
                 f"✅ Check-In Succeeded: Off Work - {now.strftime('%m/%d %H:%M:%S')}"
             )
-            group_status = "✅ completed a full shift"
 
         private_body = (
-            f"🏁 Off Work\n\n"
+            f"🏁 {name} — Off Work\n\n"
             f"{DIVIDER}\n"
             f"{status_block}\n"
             f"{DIVIDER}\n"
@@ -355,54 +278,47 @@ def off_work(message):
             f"Pure work time: {fmt_hms(pure_seconds)}\n"
             f"{counters_text}"
         )
-        group_body = (
-            f"🏁 {label} ended work — {group_status}.\n"
-            f"🕐 Time: {now.strftime('%m/%d %H:%M:%S')}\n"
-            f"Total work time: {fmt_hms(work_seconds)} | Pure work time: {fmt_hms(pure_seconds)}"
-        )
     else:
         private_body = (
-            f"🏁 Off Work\n\n"
+            f"🏁 {name} — Off Work\n\n"
             f"{DIVIDER}\n"
             f"⚠️ Start Work record not found!\n"
             f"✅ Check-In Succeeded: Off Work - {now.strftime('%m/%d %H:%M:%S')}\n"
             f"{DIVIDER}\n"
             f"{counters_text}"
         )
-        group_body = f"🏁 {label} ended work.\n🕐 Time: {now.strftime('%m/%d %H:%M:%S')}"
 
     bot.send_message(message.chat.id, private_body, reply_markup=get_markup())
     bot.send_message(message.chat.id, "📊 Type /report to see your full report.")
-    post_to_group(group_body)
 
-@bot.message_handler(func=lambda msg:msg.chat.type == "group" and msg.text == "🌅 Off Day")
+@bot.message_handler(func=lambda msg: is_group(msg) and msg.text == "🌅 Off Day")
 def off_day(message):
     user_id = message.from_user.id
-    label = get_or_create_label(user_id, message.from_user.first_name)
+    name = message.from_user.first_name
     cancel_timer(user_id)
     active_breaks.pop(user_id, None)
     now, time_str = log_event(user_id, "Off Day")
 
     bot.send_message(
         message.chat.id,
-        f"🌅 Off Day\n\n"
+        f"🌅 {name} — Off Day\n\n"
         f"{DIVIDER}\n"
         f"✅ Check-In Succeeded: Off Day - {now.strftime('%m/%d %H:%M:%S')}",
         reply_markup=get_markup()
     )
-    post_to_group(f"🌅 {label} is on Off Day today.")
 
 @bot.message_handler(commands=['report'])
 def report(message):
-    if message.chat.type != "private":
+    if not is_group(message):
         return
     user_id = message.from_user.id
+    name = message.from_user.first_name
     records = get_attendance(user_id)
     if not records:
-        bot.send_message(message.chat.id, "❌ No records found for today.")
+        bot.send_message(message.chat.id, f"❌ No records found for {name} today.")
         return
 
-    report_text = f"📊 Your Today Report\n\n{DIVIDER}\n"
+    report_text = f"📊 {name}'s Today Report\n\n{DIVIDER}\n"
     for entry in records:
         report_text += f"• {entry['action']} — {entry['time']}\n"
 
