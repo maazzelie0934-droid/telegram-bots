@@ -228,15 +228,37 @@ def smoke(message):
 def back_to_seat(message):
     user_id = message.from_user.id
     name = message.from_user.first_name
+
+    # figure out which break is being closed (before close_active_break clears it)
+    b = active_breaks.get(user_id)
+    last_break_type = b["type"] if b else None
+    last_break_seconds = int((datetime.now() - b["start"]).total_seconds()) if b else 0
+
     cancel_timer(user_id)
     close_active_break(user_id)
     now, time_str = log_event(user_id, "Back to Seat")
+
+    counters_text, _ = counters_summary_text(user_id)
+
+    emoji = {"Eat": "🍕", "Toilet": "🧻", "Smoke": "💨"}
+    if last_break_type:
+        last_break_line = (
+            f"{emoji.get(last_break_type, '🧭')} Just returned from: {last_break_type} "
+            f"(this trip: {fmt_hms(last_break_seconds)})\n"
+            f"{DIVIDER}\n"
+        )
+    else:
+        last_break_line = ""  # Back to Seat pressed without any open break
 
     bot.send_message(
         message.chat.id,
         f"🧭 {name} — Back to Seat\n\n"
         f"{DIVIDER}\n"
-        f"✅ Check-In Succeeded: Back to Seat - {now.strftime('%m/%d %H:%M:%S')}",
+        f"✅ Check-In Succeeded: Back to Seat - {now.strftime('%m/%d %H:%M:%S')}\n"
+        f"{DIVIDER}\n"
+        f"{last_break_line}"
+        f"📊 Today's full activity report:\n"
+        f"{counters_text}",
         reply_markup=get_markup()
     )
 
