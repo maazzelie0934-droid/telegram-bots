@@ -5,8 +5,11 @@ import threading
 import json
 import os
 
-# It's safer to set BOT_TOKEN as an environment variable instead of hardcoding it.
-TOKEN = os.getenv("BOT_TOKEN", "8618917471:AAENUAZbnDX_IGm2NvHp1Fn0aPuHHWRoobI")
+# IMPORTANT: Set BOT_TOKEN as an environment variable in Railway (Variables tab).
+# Do NOT hardcode the token here — if it ever gets shared/leaked, revoke it via @BotFather /revoke.
+TOKEN = os.getenv("BOT_TOKEN")
+if not TOKEN:
+    raise RuntimeError("BOT_TOKEN environment variable is not set! Add it in Railway → Variables.")
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE     = "attendance_data.json"
@@ -357,5 +360,17 @@ def report(message):
 
     bot.send_message(message.chat.id, report_text)
 
+import time
+
 print("✅ Bot Running...")
-bot.polling(none_stop=True)
+
+# Auto-reconnect loop: Telegram sometimes drops the connection
+# (ConnectionResetError / network hiccups). Instead of letting that
+# crash the whole process, we catch it and reconnect automatically —
+# so the bot never needs a manual restart on Railway.
+while True:
+    try:
+        bot.infinity_polling(timeout=30, long_polling_timeout=30)
+    except Exception as e:
+        print(f"⚠️ Polling crashed, restarting in 5s... Error: {e}")
+        time.sleep(5)
