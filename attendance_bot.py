@@ -10,7 +10,7 @@ import os
 # repo, anyone can hijack your bot. Move back to os.getenv("BOT_TOKEN") with a
 # Railway Variable as soon as you can, and revoke/regenerate this token any
 # time it's been shared or exposed (via @BotFather).
-TOKEN = "8618917471:AAFkR2_rH90oIVP8O4pQwzB3hlccgzU0Xg0"
+TOKEN = "8618917471:AAG1z90Qy9qNfuP4J6QETyP6x0qXY_n3IGk"
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE     = "attendance_data.json"
