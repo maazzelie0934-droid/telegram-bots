@@ -5,11 +5,12 @@ import threading
 import json
 import os
 
-# IMPORTANT: Set BOT_TOKEN as an environment variable in Railway (Variables tab).
-# Do NOT hardcode the token here — if it ever gets shared/leaked, revoke it via @BotFather /revoke.
-TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise RuntimeError("BOT_TOKEN environment variable is not set! Add it in Railway → Variables.")
+# NOTE: Token is hardcoded here as a temporary workaround.
+# This is NOT recommended — if this file is ever shared or pushed to a public
+# repo, anyone can hijack your bot. Move back to os.getenv("BOT_TOKEN") with a
+# Railway Variable as soon as you can, and revoke/regenerate this token any
+# time it's been shared or exposed (via @BotFather).
+TOKEN = "8618917471:AAFkR2_rH90oIVP8O4pQwzB3hlccgzU0Xg0"
 bot = telebot.TeleBot(TOKEN)
 
 DATA_FILE     = "attendance_data.json"
